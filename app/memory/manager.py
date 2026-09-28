@@ -10,15 +10,20 @@ from app.memory.models import (
     SourceType,
     TimePrecision,
 )
-from app.storage.database import DEFAULT_DB_PATH
+from app.storage.database import DEFAULT_DB_PATH, get_connection
 from app.storage.memory_repository import (
     get_at_time as repo_get_at_time,
     insert,
     list_by_key,
+    update,
 )
 
 
 class OverlapError(Exception):
+    pass
+
+
+class NoOpenMemoryError(Exception):
     pass
 
 
@@ -103,6 +108,108 @@ def store(
     insert(memory, db_path)
 
     return memory
+
+
+def supersede(
+    *,
+    memory_key: str,
+    subject: str,
+    attribute: str,
+    value: str,
+    memory_type: MemoryType,
+    valid_from: datetime,
+    precision: TimePrecision,
+    source_type: SourceType,
+    source_id: str,
+    evidence_type: EvidenceType,
+    confidence: float,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> Memory:
+    if valid_from.tzinfo is None:
+        raise ValueError("datetime must be timezone-aware")
+
+    valid_from = valid_from.astimezone(timezone.utc)
+
+    connection = get_connection(db_path)
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+
+        timeline = list_by_key(
+            memory_key,
+            connection=connection,
+        )
+
+        open_memories = [
+            memory
+            for memory in timeline
+            if memory.valid_to is None
+        ]
+
+        if not open_memories:
+            raise NoOpenMemoryError(
+                f"No open memory exists for key '{memory_key}'"
+            )
+
+        if len(open_memories) > 1:
+            raise OverlapError(
+                f"Multiple open memories exist for key "
+                f"'{memory_key}'"
+            )
+
+        current = open_memories[0]
+
+        if valid_from <= current.valid_from:
+            raise ValueError(
+                "new valid_from must be strictly after "
+                "the current memory's valid_from"
+            )
+
+        new_memory = Memory(
+            memory_id=uuid4().hex,
+            memory_key=memory_key,
+            subject=subject,
+            attribute=attribute,
+            value=value,
+            memory_type=memory_type,
+            valid_from=valid_from,
+            valid_to=None,
+            precision=precision,
+            source_type=source_type,
+            source_id=source_id,
+            evidence_type=evidence_type,
+            confidence=confidence,
+            status=MemoryStatus.ACTIVE,
+            supersedes_id=current.memory_id,
+        )
+
+        closed = update(
+            current.memory_id,
+            valid_to=new_memory.valid_from,
+            status=MemoryStatus.SUPERSEDED,
+            connection=connection,
+        )
+
+        if closed is None:
+            raise NoOpenMemoryError(
+                f"Memory {current.memory_id} disappeared"
+            )
+
+        insert(
+            new_memory,
+            connection=connection,
+        )
+
+        connection.commit()
+
+        return new_memory
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
 
 
 def get_at_time(

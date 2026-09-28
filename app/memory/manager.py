@@ -85,29 +85,44 @@ def store(
         supersedes_id=supersedes_id,
     )
 
-    # Check-then-insert is not atomic yet.
-    # A later step will move this into one transaction.
-    existing_memories = list_by_key(
-        memory_key,
-        db_path,
-    )
+    connection = get_connection(db_path)
 
-    for existing in existing_memories:
-        if _overlaps(
-            existing.valid_from,
-            existing.valid_to,
-            memory.valid_from,
-            memory.valid_to,
-        ):
-            raise OverlapError(
-                f"Memory interval overlaps existing memory "
-                f"{existing.memory_id}: "
-                f"[{existing.valid_from}, {existing.valid_to})"
-            )
+    try:
+        connection.execute("BEGIN IMMEDIATE")
 
-    insert(memory, db_path)
+        existing_memories = list_by_key(
+            memory_key,
+            connection=connection,
+        )
 
-    return memory
+        for existing in existing_memories:
+            if _overlaps(
+                existing.valid_from,
+                existing.valid_to,
+                memory.valid_from,
+                memory.valid_to,
+            ):
+                raise OverlapError(
+                    f"Memory interval overlaps existing memory "
+                    f"{existing.memory_id}: "
+                    f"[{existing.valid_from}, {existing.valid_to})"
+                )
+
+        insert(
+            memory,
+            connection=connection,
+        )
+
+        connection.commit()
+
+        return memory
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
 
 
 def supersede(

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -30,25 +30,26 @@ def make_memory(**overrides):
         "confidence": 0.98,
         "status": MemoryStatus.ACTIVE,
     }
+
     data.update(overrides)
     return data
 
 
-def test_valid_memory_is_accepted():
+def test_valid_memory_constructs():
     memory = Memory(**make_memory())
 
     assert memory.memory_id == "mem_001"
+    assert memory.memory_key == "primary_backend_language"
     assert memory.value == "Node.js"
-    assert memory.valid_from.tzinfo is not None
+    assert memory.status == MemoryStatus.ACTIVE
 
 
-def test_invalid_interval_is_rejected():
+def test_valid_to_must_be_after_valid_from():
     with pytest.raises(ValidationError):
         Memory(
             **make_memory(
                 valid_from=datetime(2026, 6, 1, tzinfo=timezone.utc),
                 valid_to=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                status=MemoryStatus.HISTORICAL,
             )
         )
 
@@ -62,7 +63,22 @@ def test_naive_datetime_is_rejected():
         )
 
 
-def test_confidence_must_be_between_zero_and_one():
+def test_datetime_with_plus_0530_offset_is_normalized_to_utc():
+    ist = timezone(timedelta(hours=5, minutes=30))
+
+    memory = Memory(
+        **make_memory(
+            valid_from=datetime(2026, 1, 1, 5, 30, tzinfo=ist),
+        )
+    )
+
+    assert memory.valid_from == datetime(
+        2026, 1, 1, 0, 0, tzinfo=timezone.utc
+    )
+    assert memory.valid_from.tzinfo == timezone.utc
+
+
+def test_confidence_above_one_is_rejected():
     with pytest.raises(ValidationError):
         Memory(**make_memory(confidence=1.5))
 
@@ -72,29 +88,40 @@ def test_empty_memory_key_is_rejected():
         Memory(**make_memory(memory_key=""))
 
 
-def test_active_memory_cannot_end_in_the_past():
+def test_past_valid_to_with_active_status_is_accepted():
+    memory = Memory(
+        **make_memory(
+            valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            status=MemoryStatus.ACTIVE,
+        )
+    )
+
+    assert memory.status == MemoryStatus.ACTIVE
+    assert memory.valid_to == datetime(
+        2026, 6, 1, tzinfo=timezone.utc
+    )
+
+
+def test_superseded_memory_requires_valid_to():
     with pytest.raises(ValidationError):
         Memory(
             **make_memory(
-                valid_to=datetime(2020, 1, 1, tzinfo=timezone.utc),
-                status=MemoryStatus.ACTIVE,
+                valid_to=None,
+                status=MemoryStatus.SUPERSEDED,
             )
         )
 
 
-def test_historical_memory_can_end_in_the_past():
-    memory = Memory(
-        **make_memory(
-            valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
-            status=MemoryStatus.HISTORICAL,
+def test_memory_cannot_supersede_itself():
+    with pytest.raises(ValidationError):
+        Memory(
+            **make_memory(
+                supersedes_id="mem_001",
+            )
         )
-    )
-
-    assert memory.status == MemoryStatus.HISTORICAL
-    assert memory.valid_to is not None
 
 
-def test_memory_is_immutable():
+def test_memory_is_frozen():
     memory = Memory(**make_memory())
 
     with pytest.raises(ValidationError):

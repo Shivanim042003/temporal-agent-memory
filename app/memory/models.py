@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -72,25 +72,40 @@ class Memory(BaseModel):
 
     @field_validator("valid_from", "valid_to", "recorded_at")
     @classmethod
-    def require_timezone_aware_datetime(cls, value: datetime | None):
-        if value is not None and value.tzinfo is None:
+    def normalize_to_utc(cls, value: datetime | None):
+        if value is None:
+            return value
+
+        if value.tzinfo is None:
             raise ValueError("datetime must be timezone-aware")
-        return value
+
+        return value.astimezone(timezone.utc)
 
     @model_validator(mode="after")
     def validate_temporal_interval(self):
         if self.valid_to is not None and self.valid_to <= self.valid_from:
             raise ValueError("valid_to must be later than valid_from")
+
         return self
 
     @model_validator(mode="after")
-    def validate_active_memory(self):
+    def validate_status_consistency(self):
         if (
-            self.status == MemoryStatus.ACTIVE
-            and self.valid_to is not None
-            and self.valid_to <= datetime.now(timezone.utc)
+            self.status in {
+                MemoryStatus.HISTORICAL,
+                MemoryStatus.SUPERSEDED,
+            }
+            and self.valid_to is None
         ):
             raise ValueError(
-                "ACTIVE memory cannot have a valid_to in the past"
+                "HISTORICAL/SUPERSEDED memory must have valid_to"
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_supersedes_id(self):
+        if self.supersedes_id == self.memory_id:
+            raise ValueError("memory cannot supersede itself")
+
         return self

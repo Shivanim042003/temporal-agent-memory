@@ -750,21 +750,11 @@ def test_failed_supersede_leaves_old_memory_open(
 ):
     old = store(
         **make_store_kwargs(
-            value="Node.js",
-            valid_from=datetime(
-                2026,
-                1,
-                1,
-                tzinfo=timezone.utc,
-            ),
             valid_to=None,
-            source_id="conversation_001",
         ),
         db_path=database_path,
     )
 
-    # Create a DIFFERENT existing memory.
-    # Its ID will be used to force the INSERT collision.
     conflicting = store(
         **make_store_kwargs(
             memory_key="other_memory_key",
@@ -781,8 +771,6 @@ def test_failed_supersede_leaves_old_memory_open(
         db_path=database_path,
     )
 
-    # Force supersede() to generate the already-existing
-    # conflicting memory ID.
     monkeypatch.setattr(
         "app.memory.manager.uuid4",
         lambda: type(
@@ -796,19 +784,10 @@ def test_failed_supersede_leaves_old_memory_open(
 
     with pytest.raises(sqlite3.IntegrityError):
         supersede(
-            **make_supersede_kwargs(
-                value="Go",
-                valid_from=datetime(
-                    2026,
-                    6,
-                    1,
-                    tzinfo=timezone.utc,
-                ),
-            ),
+            **make_supersede_kwargs(),
             db_path=database_path,
         )
 
-    # The UPDATE to the old memory must have been rolled back.
     after = get(
         old.memory_id,
         database_path,
@@ -818,7 +797,6 @@ def test_failed_supersede_leaves_old_memory_open(
     assert after.valid_to is None
     assert after.status == MemoryStatus.ACTIVE
 
-    # No new memory should have been committed.
     timeline = list_by_key(
         "primary_backend_language",
         database_path,
@@ -827,7 +805,6 @@ def test_failed_supersede_leaves_old_memory_open(
     assert len(timeline) == 1
     assert timeline[0].memory_id == old.memory_id
 
-    # The unrelated conflicting memory must still exist.
     conflicting_after = get(
         conflicting.memory_id,
         database_path,

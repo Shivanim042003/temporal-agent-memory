@@ -1,4 +1,5 @@
 ﻿import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 
 import pytest
@@ -11,12 +12,16 @@ from app.memory.models import (
     SourceType,
     TimePrecision,
 )
-from app.storage.database import initialize_database
+from app.storage.database import (
+    get_connection,
+    initialize_database,
+)
 from app.storage.memory_repository import (
     get,
     get_at_time,
     insert,
     list_by_key,
+    update,
 )
 
 
@@ -333,3 +338,240 @@ def test_list_by_key_unknown_key_returns_empty_list(database_path):
     )
 
     assert timeline == []
+
+
+def test_update_changes_valid_to(database_path):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(memory, database_path)
+
+    closed_at = datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    updated = update(
+        memory.memory_id,
+        valid_to=closed_at,
+        status=MemoryStatus.SUPERSEDED,
+        db_path=database_path,
+    )
+
+    assert updated.memory_id == memory.memory_id
+    assert updated.valid_to == closed_at
+    assert updated.status == MemoryStatus.SUPERSEDED
+
+
+def test_update_persists_changes(database_path):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(memory, database_path)
+
+    closed_at = datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    update(
+        memory.memory_id,
+        valid_to=closed_at,
+        status=MemoryStatus.SUPERSEDED,
+        db_path=database_path,
+    )
+
+    stored = get(
+        memory.memory_id,
+        database_path,
+    )
+
+    assert stored is not None
+    assert stored.valid_to == closed_at
+    assert stored.status == MemoryStatus.SUPERSEDED
+
+    timeline = list_by_key(
+        "primary_backend_language",
+        database_path,
+    )
+
+    assert len(timeline) == 1
+    assert timeline[0].memory_id == memory.memory_id
+    assert timeline[0].valid_to == closed_at
+    assert timeline[0].status == MemoryStatus.SUPERSEDED
+
+
+def test_update_unknown_memory_returns_none(database_path):
+    result = update(
+        "does-not-exist",
+        valid_to=datetime(
+            2026,
+            6,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.SUPERSEDED,
+        db_path=database_path,
+    )
+
+    assert result is None
+
+
+def test_update_does_not_change_other_fields(database_path):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(memory, database_path)
+
+    closed_at = datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    updated = update(
+        memory.memory_id,
+        valid_to=closed_at,
+        status=MemoryStatus.SUPERSEDED,
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.memory_key == memory.memory_key
+    assert updated.subject == memory.subject
+    assert updated.attribute == memory.attribute
+    assert updated.value == memory.value
+    assert updated.memory_type == memory.memory_type
+    assert updated.valid_from == memory.valid_from
+    assert updated.precision == memory.precision
+    assert updated.recorded_at == memory.recorded_at
+    assert updated.source_type == memory.source_type
+    assert updated.source_id == memory.source_id
+    assert updated.evidence_type == memory.evidence_type
+    assert updated.confidence == memory.confidence
+    assert updated.supersedes_id == memory.supersedes_id
+
+
+def test_update_invalid_valid_to_leaves_memory_unchanged(database_path):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(memory, database_path)
+
+    invalid_valid_to = datetime(
+        2025,
+        12,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    with pytest.raises(ValueError):
+        update(
+            memory.memory_id,
+            valid_to=invalid_valid_to,
+            status=MemoryStatus.SUPERSEDED,
+            db_path=database_path,
+        )
+
+    stored = get(
+        memory.memory_id,
+        database_path,
+    )
+
+    assert stored is not None
+    assert stored.valid_to is None
+    assert stored.status == MemoryStatus.ACTIVE
+
+
+def test_insert_on_shared_connection_is_invisible_until_commit(
+    database_path,
+):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    with closing(get_connection(database_path)) as conn:
+        insert(
+            memory,
+            connection=conn,
+        )
+
+        assert get(
+            memory.memory_id,
+            connection=conn,
+        ) is not None
+
+        assert get(
+            memory.memory_id,
+            database_path,
+        ) is None
+
+        conn.commit()
+
+        assert get(
+            memory.memory_id,
+            database_path,
+        ) is not None
+
+
+def test_update_on_shared_connection_is_invisible_until_commit(
+    database_path,
+):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(
+        memory,
+        database_path,
+    )
+
+    closed_at = datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    with closing(get_connection(database_path)) as conn:
+        update(
+            memory.memory_id,
+            valid_to=closed_at,
+            status=MemoryStatus.SUPERSEDED,
+            connection=conn,
+        )
+
+        stored = get(
+            memory.memory_id,
+            database_path,
+        )
+
+        assert stored is not None
+        assert stored.valid_to is None
+        assert stored.status == MemoryStatus.ACTIVE
+
+        conn.commit()
+
+        stored = get(
+            memory.memory_id,
+            database_path,
+        )
+
+        assert stored is not None
+        assert stored.valid_to == closed_at
+        assert stored.status == MemoryStatus.SUPERSEDED

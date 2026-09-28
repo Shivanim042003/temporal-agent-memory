@@ -1,9 +1,22 @@
-﻿from contextlib import closing
+﻿import sqlite3
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.memory.models import Memory
+from app.memory.models import Memory, MemoryStatus
 from app.storage.database import DEFAULT_DB_PATH, get_connection
+
+
+@contextmanager
+def _connection_scope(
+    db_path: Path | str,
+    connection: sqlite3.Connection | None,
+):
+    if connection is not None:
+        yield connection
+    else:
+        with closing(get_connection(db_path)) as conn, conn:
+            yield conn
 
 
 def _serialize_datetime(value: datetime) -> str:
@@ -70,9 +83,10 @@ def _row_to_memory(row) -> Memory:
 def insert(
     memory: Memory,
     db_path: Path | str = DEFAULT_DB_PATH,
+    connection: sqlite3.Connection | None = None,
 ) -> None:
-    with closing(get_connection(db_path)) as connection, connection:
-        connection.execute(
+    with _connection_scope(db_path, connection) as conn:
+        conn.execute(
             """
             INSERT INTO memory (
                 memory_id,
@@ -101,9 +115,10 @@ def insert(
 def get(
     memory_id: str,
     db_path: Path | str = DEFAULT_DB_PATH,
+    connection: sqlite3.Connection | None = None,
 ) -> Memory | None:
-    with closing(get_connection(db_path)) as connection:
-        row = connection.execute(
+    with _connection_scope(db_path, connection) as conn:
+        row = conn.execute(
             """
             SELECT *
             FROM memory
@@ -121,9 +136,10 @@ def get(
 def list_by_key(
     memory_key: str,
     db_path: Path | str = DEFAULT_DB_PATH,
+    connection: sqlite3.Connection | None = None,
 ) -> list[Memory]:
-    with closing(get_connection(db_path)) as connection:
-        rows = connection.execute(
+    with _connection_scope(db_path, connection) as conn:
+        rows = conn.execute(
             """
             SELECT *
             FROM memory
@@ -166,3 +182,49 @@ def get_at_time(
         return None
 
     return _row_to_memory(row)
+
+
+def update(
+    memory_id: str,
+    *,
+    valid_to: datetime | None,
+    status: MemoryStatus,
+    db_path: Path | str = DEFAULT_DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> Memory | None:
+    with _connection_scope(db_path, connection) as conn:
+        existing = get(
+            memory_id,
+            connection=conn,
+        )
+
+        if existing is None:
+            return None
+
+        updated = Memory(
+            **{
+                **existing.model_dump(),
+                "valid_to": valid_to,
+                "status": status,
+            }
+        )
+
+        conn.execute(
+            """
+            UPDATE memory
+            SET valid_to = ?,
+                status = ?
+            WHERE memory_id = ?
+            """,
+            (
+                (
+                    _serialize_datetime(updated.valid_to)
+                    if updated.valid_to is not None
+                    else None
+                ),
+                updated.status.value,
+                updated.memory_id,
+            ),
+        )
+
+    return updated

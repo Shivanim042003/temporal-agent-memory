@@ -237,3 +237,62 @@ def get_at_time(
         at,
         db_path,
     )
+
+
+def get_current(
+    memory_key: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> Memory | None:
+    timeline = list_by_key(memory_key, db_path)
+
+    for memory in timeline:
+        if memory.valid_to is None:
+            return memory
+
+    return None
+
+
+def get_range(
+    memory_key: str,
+    start: datetime,
+    end: datetime,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[Memory]:
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ValueError("datetime must be timezone-aware")
+
+    start = start.astimezone(timezone.utc)
+    end = end.astimezone(timezone.utc)
+
+    if end <= start:
+        raise ValueError("end must be strictly after start")
+
+    timeline = list_by_key(memory_key, db_path)
+
+    return [
+        memory
+        for memory in timeline
+        if _overlaps(memory.valid_from, memory.valid_to, start, end)
+    ]
+
+
+def get_transition(
+    memory_key: str,
+    from_value: str,
+    to_value: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> datetime | None:
+    timeline = list_by_key(memory_key, db_path)
+    by_id = {memory.memory_id: memory for memory in timeline}
+
+    for memory in timeline:
+        if memory.value != to_value:
+            continue
+        if memory.supersedes_id is None:
+            continue
+
+        previous = by_id.get(memory.supersedes_id)
+        if previous is not None and previous.value == from_value:
+            return memory.valid_from
+
+    return None

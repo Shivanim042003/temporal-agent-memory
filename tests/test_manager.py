@@ -10,6 +10,9 @@ from app.memory.manager import (
     OverlapError,
     _overlaps,
     get_at_time,
+    get_current,
+    get_range,
+    get_transition,
     store,
     supersede,
 )
@@ -988,3 +991,191 @@ def test_failed_supersede_leaves_old_memory_open(
     assert retrieved_conflicting is not None
     assert retrieved_conflicting.valid_to is None
     assert retrieved_conflicting.status == MemoryStatus.ACTIVE
+
+
+def test_get_current_returns_open_memory(database_path):
+    store(
+        **make_store_kwargs(valid_to=None),
+        db_path=database_path,
+    )
+
+    current = get_current(
+        "primary_backend_language",
+        database_path,
+    )
+
+    assert current is not None
+    assert current.value == "Node.js"
+
+
+def test_get_current_returns_none_when_all_closed(database_path):
+    store(
+        **make_store_kwargs(
+            valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        ),
+        db_path=database_path,
+    )
+
+    assert get_current(
+        "primary_backend_language",
+        database_path,
+    ) is None
+
+
+def test_get_current_returns_none_for_unknown_key(database_path):
+    assert get_current(
+        "does_not_exist",
+        database_path,
+    ) is None
+
+
+def test_get_range_returns_memories_spanning_boundary(database_path):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=None,
+        ),
+        db_path=database_path,
+    )
+    supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    results = get_range(
+        "primary_backend_language",
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 9, 1, tzinfo=timezone.utc),
+        database_path,
+    )
+
+    assert [m.value for m in results] == ["Node.js", "Go"]
+
+
+def test_get_range_returns_only_overlapping_memory(database_path):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=None,
+        ),
+        db_path=database_path,
+    )
+    supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    results = get_range(
+        "primary_backend_language",
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
+        database_path,
+    )
+
+    assert [m.value for m in results] == ["Node.js"]
+
+
+def test_get_range_returns_empty_when_no_overlap(database_path):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        ),
+        db_path=database_path,
+    )
+
+    results = get_range(
+        "primary_backend_language",
+        datetime(2027, 1, 1, tzinfo=timezone.utc),
+        datetime(2027, 6, 1, tzinfo=timezone.utc),
+        database_path,
+    )
+
+    assert results == []
+
+
+def test_get_range_rejects_naive_datetime(database_path):
+    with pytest.raises(ValueError, match="timezone-aware"):
+        get_range(
+            "primary_backend_language",
+            datetime(2026, 1, 1),
+            datetime(2026, 6, 1, tzinfo=timezone.utc),
+            database_path,
+        )
+
+
+def test_get_range_rejects_end_before_start(database_path):
+    with pytest.raises(ValueError):
+        get_range(
+            "primary_backend_language",
+            datetime(2026, 6, 1, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            database_path,
+        )
+
+
+def test_get_transition_returns_correct_valid_from(database_path):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=None,
+        ),
+        db_path=database_path,
+    )
+    supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    transition = get_transition(
+        "primary_backend_language",
+        "Node.js",
+        "Go",
+        database_path,
+    )
+
+    assert transition == datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+
+def test_get_transition_returns_none_when_transition_never_happened(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=None,
+        ),
+        db_path=database_path,
+    )
+
+    transition = get_transition(
+        "primary_backend_language",
+        "Node.js",
+        "Python",
+        database_path,
+    )
+
+    assert transition is None
+
+
+def test_get_transition_returns_none_for_reversed_pair(database_path):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=None,
+        ),
+        db_path=database_path,
+    )
+    supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    transition = get_transition(
+        "primary_backend_language",
+        "Go",
+        "Node.js",
+        database_path,
+    )
+
+    assert transition is None

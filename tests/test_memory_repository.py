@@ -16,6 +16,7 @@ from app.storage.memory_repository import (
     get,
     get_at_time,
     insert,
+    list_by_key,
 )
 
 
@@ -208,3 +209,127 @@ def test_unknown_memory_key_returns_none(database_path):
     )
 
     assert retrieved is None
+
+
+def test_list_by_key_returns_complete_timeline(database_path):
+    node = make_memory(
+        memory_id="mem_node",
+        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        value="Node.js",
+    )
+
+    go = make_memory(
+        memory_id="mem_go",
+        valid_from=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        valid_to=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        value="Go",
+        status=MemoryStatus.SUPERSEDED,
+        supersedes_id="mem_node",
+    )
+
+    python = make_memory(
+        memory_id="mem_python",
+        valid_from=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        valid_to=None,
+        value="Python",
+        status=MemoryStatus.ACTIVE,
+        supersedes_id="mem_go",
+    )
+
+    insert(node, database_path)
+    insert(go, database_path)
+    insert(python, database_path)
+
+    timeline = list_by_key(
+        "primary_backend_language",
+        database_path,
+    )
+
+    assert len(timeline) == 3
+    assert [memory.value for memory in timeline] == [
+        "Node.js",
+        "Go",
+        "Python",
+    ]
+
+
+def test_list_by_key_orders_by_valid_from(database_path):
+    python = make_memory(
+        memory_id="mem_python",
+        valid_from=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        valid_to=None,
+        value="Python",
+        status=MemoryStatus.ACTIVE,
+    )
+
+    node = make_memory(
+        memory_id="mem_node",
+        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        value="Node.js",
+        status=MemoryStatus.HISTORICAL,
+    )
+
+    go = make_memory(
+        memory_id="mem_go",
+        valid_from=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        valid_to=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        value="Go",
+        status=MemoryStatus.SUPERSEDED,
+        supersedes_id="mem_node",
+    )
+
+    # Intentionally insert out of chronological order.
+    insert(python, database_path)
+    insert(node, database_path)
+    insert(go, database_path)
+
+    timeline = list_by_key(
+        "primary_backend_language",
+        database_path,
+    )
+
+    assert [memory.value for memory in timeline] == [
+        "Node.js",
+        "Go",
+        "Python",
+    ]
+
+
+def test_list_by_key_excludes_other_memory_keys(database_path):
+    backend = make_memory(
+        memory_id="mem_backend",
+        memory_key="primary_backend_language",
+        value="Node.js",
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    db_memory = make_memory(
+        memory_id="mem_database",
+        memory_key="primary_database",
+        value="PostgreSQL",
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(backend, database_path)
+    insert(db_memory, database_path)
+
+    timeline = list_by_key(
+        "primary_backend_language",
+        database_path,
+    )
+
+    assert len(timeline) == 1
+    assert timeline[0].value == "Node.js"
+
+
+def test_list_by_key_unknown_key_returns_empty_list(database_path):
+    timeline = list_by_key(
+        "does_not_exist",
+        database_path,
+    )
+
+    assert timeline == []

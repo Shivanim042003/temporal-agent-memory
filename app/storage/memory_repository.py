@@ -118,6 +118,24 @@ def get(
     return _row_to_memory(row)
 
 
+def list_by_key(
+    memory_key: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[Memory]:
+    with closing(get_connection(db_path)) as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM memory
+            WHERE memory_key = ?
+            ORDER BY valid_from ASC
+            """,
+            (memory_key,),
+        ).fetchall()
+
+    return [_row_to_memory(row) for row in rows]
+
+
 def get_at_time(
     memory_key: str,
     at: datetime,

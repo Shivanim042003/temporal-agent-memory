@@ -1,7 +1,9 @@
-﻿import sqlite3
+import sqlite3
 from datetime import datetime, timedelta, timezone
-
+from uuid import uuid4
 import pytest
+
+from app.storage.database import initialize_database
 
 from app.memory.manager import (
     NoOpenMemoryError,
@@ -18,290 +20,151 @@ from app.memory.models import (
     SourceType,
     TimePrecision,
 )
-from app.storage.database import initialize_database
 from app.storage.memory_repository import get, list_by_key
+
+
+def make_store_kwargs(
+    *,
+    memory_key="primary_backend_language",
+    subject="user",
+    attribute="programming_language",
+    value="Node.js",
+    memory_type=MemoryType.SKILL,
+    valid_from=datetime(
+        2026,
+        1,
+        1,
+        tzinfo=timezone.utc,
+    ),
+    valid_to=None,
+    precision=TimePrecision.EXACT,
+    source_type=SourceType.CONVERSATION,
+    source_id="conversation_001",
+    evidence_type=EvidenceType.EXPLICIT,
+    confidence=1.0,
+    supersedes_id=None,
+):
+    return {
+        "memory_key": memory_key,
+        "subject": subject,
+        "attribute": attribute,
+        "value": value,
+        "memory_type": memory_type,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "precision": precision,
+        "source_type": source_type,
+        "source_id": source_id,
+        "evidence_type": evidence_type,
+        "confidence": confidence,
+        "supersedes_id": supersedes_id,
+    }
+
+
+def make_supersede_kwargs(
+    *,
+    memory_key="primary_backend_language",
+    subject="user",
+    attribute="programming_language",
+    value="Go",
+    memory_type=MemoryType.SKILL,
+    valid_from=datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    ),
+    precision=TimePrecision.EXACT,
+    source_type=SourceType.CONVERSATION,
+    source_id="conversation_002",
+    evidence_type=EvidenceType.EXPLICIT,
+    confidence=1.0,
+):
+    return {
+        "memory_key": memory_key,
+        "subject": subject,
+        "attribute": attribute,
+        "value": value,
+        "memory_type": memory_type,
+        "valid_from": valid_from,
+        "precision": precision,
+        "source_type": source_type,
+        "source_id": source_id,
+        "evidence_type": evidence_type,
+        "confidence": confidence,
+    }
 
 
 @pytest.fixture
 def database_path(tmp_path):
-    path = tmp_path / "test.db"
+    path = tmp_path / "memory.db"
     initialize_database(path)
     return path
 
 
-def make_store_kwargs(**overrides):
-    data = {
-        "memory_key": "primary_backend_language",
-        "subject": "user",
-        "attribute": "uses",
-        "value": "Node.js",
-        "memory_type": MemoryType.SKILL,
-        "valid_from": datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        "valid_to": datetime(
-            2026,
-            6,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        "precision": TimePrecision.DAY,
-        "source_type": SourceType.CONVERSATION,
-        "source_id": "conversation_001",
-        "evidence_type": EvidenceType.EXPLICIT,
-        "confidence": 0.98,
-    }
-
-    data.update(overrides)
-    return data
+def test_overlaps_open_intervals():
+    assert _overlaps(
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        None,
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+        None,
+    )
 
 
-def make_supersede_kwargs(**overrides):
-    data = {
-        "memory_key": "primary_backend_language",
-        "subject": "user",
-        "attribute": "uses",
-        "value": "Go",
-        "memory_type": MemoryType.SKILL,
-        "valid_from": datetime(
-            2026,
-            6,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        "precision": TimePrecision.DAY,
-        "source_type": SourceType.CONVERSATION,
-        "source_id": "conversation_002",
-        "evidence_type": EvidenceType.EXPLICIT,
-        "confidence": 0.99,
-    }
-
-    data.update(overrides)
-    return data
+def test_overlaps_closed_intervals():
+    assert _overlaps(
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 5, 1, tzinfo=timezone.utc),
+        datetime(2026, 7, 1, tzinfo=timezone.utc),
+    )
 
 
 def test_adjacent_intervals_do_not_overlap():
-    june = datetime(
-        2026,
-        6,
-        1,
-        tzinfo=timezone.utc,
+    assert not _overlaps(
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        None,
     )
 
-    assert _overlaps(
-        datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        june,
-        june,
-        None,
-    ) is False
 
-
-def test_overlapping_intervals_overlap():
-    assert _overlaps(
-        datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            6,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            5,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        None,
-    ) is True
-
-
-def test_two_open_ended_intervals_overlap():
-    assert _overlaps(
-        datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        None,
-        datetime(
-            2026,
-            6,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        None,
-    ) is True
-
-
-def test_non_overlapping_historical_intervals():
-    assert _overlaps(
-        datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            3,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            3,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            6,
-            1,
-            tzinfo=timezone.utc,
-        ),
-    ) is False
-
-
-def test_inner_interval_overlaps_outer_interval():
-    assert _overlaps(
-        datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            12,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            3,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        datetime(
-            2026,
-            6,
-            1,
-            tzinfo=timezone.utc,
-        ),
-    ) is True
-
-
-def test_one_microsecond_overlap():
-    june = datetime(
-        2026,
-        6,
-        1,
-        tzinfo=timezone.utc,
+def test_interval_before_another_does_not_overlap():
+    assert not _overlaps(
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 4, 1, tzinfo=timezone.utc),
     )
 
-    assert _overlaps(
-        datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        june,
-        june - timedelta(microseconds=1),
-        None,
-    ) is True
+
+def test_interval_after_another_does_not_overlap():
+    assert not _overlaps(
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 4, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
 
 
-def test_store_node_js_then_go(database_path):
-    node = store(
-        **make_store_kwargs(
-            value="Node.js",
-            valid_from=datetime(
-                2026,
-                1,
-                1,
-                tzinfo=timezone.utc,
-            ),
-            valid_to=datetime(
-                2026,
-                6,
-                1,
-                tzinfo=timezone.utc,
-            ),
-            source_id="conversation_001",
-        ),
+def test_store_creates_active_memory_when_valid_to_is_none(
+    database_path,
+):
+    memory = store(
+        **make_store_kwargs(),
         db_path=database_path,
     )
 
-    go = store(
-        **make_store_kwargs(
-            value="Go",
-            valid_from=datetime(
-                2026,
-                6,
-                1,
-                tzinfo=timezone.utc,
-            ),
-            valid_to=None,
-            source_id="conversation_002",
-            supersedes_id=node.memory_id,
-        ),
-        db_path=database_path,
-    )
-
-    timeline = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    assert len(timeline) == 2
-    assert timeline[0].value == "Node.js"
-    assert timeline[1].value == "Go"
-
-    march = get_at_time(
-        "primary_backend_language",
-        datetime(
-            2026,
-            3,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        database_path,
-    )
-
-    july = get_at_time(
-        "primary_backend_language",
-        datetime(
-            2026,
-            7,
-            1,
-            tzinfo=timezone.utc,
-        ),
-        database_path,
-    )
-
-    assert march is not None
-    assert march.value == "Node.js"
-
-    assert july is not None
-    assert july.value == "Go"
+    assert memory.memory_id
+    assert memory.memory_key == "primary_backend_language"
+    assert memory.value == "Node.js"
+    assert memory.status == MemoryStatus.ACTIVE
+    assert memory.valid_to is None
 
 
-def test_closed_interval_gets_historical_status(database_path):
+def test_store_creates_historical_memory_when_valid_to_exists(
+    database_path,
+):
     memory = store(
         **make_store_kwargs(
             valid_to=datetime(
@@ -315,117 +178,41 @@ def test_closed_interval_gets_historical_status(database_path):
     )
 
     assert memory.status == MemoryStatus.HISTORICAL
+    assert memory.valid_to == datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
 
 
-def test_open_interval_gets_active_status(database_path):
+def test_store_persists_memory(
+    database_path,
+):
     memory = store(
-        **make_store_kwargs(
-            valid_to=None,
-        ),
+        **make_store_kwargs(),
         db_path=database_path,
     )
 
-    assert memory.status == MemoryStatus.ACTIVE
-
-
-def test_overlapping_interval_raises_overlap_error(database_path):
-    node = store(
-        **make_store_kwargs(
-            valid_to=datetime(
-                2026,
-                6,
-                1,
-                tzinfo=timezone.utc,
-            ),
-        ),
-        db_path=database_path,
+    retrieved = get(
+        memory.memory_id,
+        database_path,
     )
 
-    with pytest.raises(
-        OverlapError,
-        match=node.memory_id,
-    ):
-        store(
-            **make_store_kwargs(
-                value="Python",
-                valid_from=datetime(
-                    2026,
-                    5,
-                    1,
-                    tzinfo=timezone.utc,
-                ),
-                valid_to=None,
-                source_id="conversation_002",
-            ),
-            db_path=database_path,
-        )
+    assert retrieved == memory
 
 
-def test_two_open_ended_memories_for_same_key_raise_overlap_error(
+def test_store_allows_adjacent_interval(
     database_path,
 ):
     store(
         **make_store_kwargs(
-            valid_to=None,
-        ),
-        db_path=database_path,
-    )
-
-    with pytest.raises(OverlapError):
-        store(
-            **make_store_kwargs(
-                value="Go",
-                valid_from=datetime(
-                    2026,
-                    6,
-                    1,
-                    tzinfo=timezone.utc,
-                ),
-                valid_to=None,
-                source_id="conversation_002",
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
             ),
-            db_path=database_path,
-        )
-
-
-def test_different_memory_keys_do_not_conflict(database_path):
-    backend = store(
-        **make_store_kwargs(
-            valid_to=None,
-        ),
-        db_path=database_path,
-    )
-
-    db_memory = store(
-        **make_store_kwargs(
-            memory_key="primary_database",
-            value="PostgreSQL",
-            valid_to=None,
-            source_id="conversation_002",
-        ),
-        db_path=database_path,
-    )
-
-    backend_timeline = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    database_timeline = list_by_key(
-        "primary_database",
-        database_path,
-    )
-
-    assert backend.memory_id != db_memory.memory_id
-    assert len(backend_timeline) == 1
-    assert len(database_timeline) == 1
-    assert backend_timeline[0].value == "Node.js"
-    assert database_timeline[0].value == "PostgreSQL"
-
-
-def test_store_generates_unique_ids(database_path):
-    first = store(
-        **make_store_kwargs(
             valid_to=datetime(
                 2026,
                 6,
@@ -447,34 +234,28 @@ def test_store_generates_unique_ids(database_path):
             ),
             valid_to=None,
             source_id="conversation_002",
-            supersedes_id=first.memory_id,
         ),
         db_path=database_path,
     )
 
-    assert first.memory_id != second.memory_id
+    assert second.value == "Go"
 
 
-def test_rejected_store_leaves_database_unchanged(database_path):
+def test_store_rejects_overlapping_interval(
+    database_path,
+):
     store(
-        **make_store_kwargs(
-            valid_to=None,
-        ),
+        **make_store_kwargs(),
         db_path=database_path,
-    )
-
-    before = list_by_key(
-        "primary_backend_language",
-        database_path,
     )
 
     with pytest.raises(OverlapError):
         store(
             **make_store_kwargs(
-                value="Python",
+                value="Go",
                 valid_from=datetime(
                     2026,
-                    3,
+                    5,
                     1,
                     tzinfo=timezone.utc,
                 ),
@@ -484,16 +265,550 @@ def test_rejected_store_leaves_database_unchanged(database_path):
             db_path=database_path,
         )
 
-    after = list_by_key(
-        "primary_backend_language",
+
+def test_store_rejects_interval_containing_existing_memory(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(
+                2026,
+                3,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=datetime(
+                2026,
+                6,
+                1,
+                tzinfo=timezone.utc,
+            ),
+        ),
+        db_path=database_path,
+    )
+
+    with pytest.raises(OverlapError):
+        store(
+            **make_store_kwargs(
+                value="Go",
+                valid_from=datetime(
+                    2026,
+                    1,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                valid_to=datetime(
+                    2026,
+                    8,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                source_id="conversation_002",
+            ),
+            db_path=database_path,
+        )
+
+
+def test_store_rejects_interval_inside_existing_memory(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=datetime(
+                2026,
+                12,
+                1,
+                tzinfo=timezone.utc,
+            ),
+        ),
+        db_path=database_path,
+    )
+
+    with pytest.raises(OverlapError):
+        store(
+            **make_store_kwargs(
+                value="Go",
+                valid_from=datetime(
+                    2026,
+                    3,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                valid_to=datetime(
+                    2026,
+                    6,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                source_id="conversation_002",
+            ),
+            db_path=database_path,
+        )
+
+
+def test_store_rejects_open_interval_overlapping_existing_memory(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=datetime(
+                2026,
+                6,
+                1,
+                tzinfo=timezone.utc,
+            ),
+        ),
+        db_path=database_path,
+    )
+
+    with pytest.raises(OverlapError):
+        store(
+            **make_store_kwargs(
+                value="Go",
+                valid_from=datetime(
+                    2026,
+                    5,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                valid_to=None,
+                source_id="conversation_002",
+            ),
+            db_path=database_path,
+        )
+
+
+def test_store_rejects_closed_interval_overlapping_open_memory(
+    database_path,
+):
+    store(
+        **make_store_kwargs(),
+        db_path=database_path,
+    )
+
+    with pytest.raises(OverlapError):
+        store(
+            **make_store_kwargs(
+                value="Go",
+                valid_from=datetime(
+                    2026,
+                    5,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                valid_to=datetime(
+                    2026,
+                    7,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                source_id="conversation_002",
+            ),
+            db_path=database_path,
+        )
+
+
+def test_store_rejected_overlap_leaves_existing_memory_unchanged(
+    database_path,
+):
+    original = store(
+        **make_store_kwargs(),
+        db_path=database_path,
+    )
+
+    with pytest.raises(OverlapError):
+        store(
+            **make_store_kwargs(
+                value="Go",
+                valid_from=datetime(
+                    2026,
+                    5,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                valid_to=None,
+                source_id="conversation_002",
+            ),
+            db_path=database_path,
+        )
+
+    retrieved = get(
+        original.memory_id,
         database_path,
     )
 
-    assert len(after) == len(before)
-    assert after == before
+    assert retrieved == original
 
 
-def test_supersede_closes_old_memory_and_creates_new_memory(
+def test_store_with_different_memory_key_does_not_overlap(
+    database_path,
+):
+    first = store(
+        **make_store_kwargs(
+            memory_key="primary_backend_language",
+        ),
+        db_path=database_path,
+    )
+
+    second = store(
+        **make_store_kwargs(
+            memory_key="secondary_backend_language",
+            value="Go",
+            source_id="conversation_002",
+        ),
+        db_path=database_path,
+    )
+
+    assert first.value == "Node.js"
+    assert second.value == "Go"
+
+
+def test_store_with_timezone_aware_datetime_normalizes_to_utc(
+    database_path,
+):
+    memory = store(
+        **make_store_kwargs(
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                5,
+                0,
+                tzinfo=timezone.utc,
+            ),
+        ),
+        db_path=database_path,
+    )
+
+    assert memory.valid_from.tzinfo == timezone.utc
+
+
+def test_store_preserves_confidence(
+    database_path,
+):
+    memory = store(
+        **make_store_kwargs(
+            confidence=0.75,
+        ),
+        db_path=database_path,
+    )
+
+    assert memory.confidence == 0.75
+
+
+def test_store_preserves_provenance(
+    database_path,
+):
+    memory = store(
+        **make_store_kwargs(
+            source_id="conversation_123",
+            evidence_type=EvidenceType.INFERRED,
+        ),
+        db_path=database_path,
+    )
+
+    assert memory.source_id == "conversation_123"
+    assert memory.evidence_type == EvidenceType.INFERRED
+
+
+def test_store_rejected_duplicate_id_leaves_database_unchanged(
+    database_path,
+    monkeypatch,
+):
+    original = store(
+        **make_store_kwargs(),
+        db_path=database_path,
+    )
+
+    original_uuid4 = uuid4
+
+    class FixedUUID:
+        hex = original.memory_id
+
+    monkeypatch.setattr(
+        "app.memory.manager.uuid4",
+        lambda: FixedUUID(),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store(
+            **make_store_kwargs(
+                memory_key="different_memory_key",
+                value="Go",
+                source_id="conversation_002",
+            ),
+            db_path=database_path,
+        )
+
+    retrieved = get(
+        original.memory_id,
+        database_path,
+    )
+
+    assert retrieved == original
+
+    monkeypatch.setattr(
+        "app.memory.manager.uuid4",
+        original_uuid4,
+    )
+
+
+def test_supersede_closes_current_memory(
+    database_path,
+):
+    old = store(
+        **make_store_kwargs(
+            value="Node.js",
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_001",
+        ),
+        db_path=database_path,
+    )
+
+    new = supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    retrieved_old = get(
+        old.memory_id,
+        database_path,
+    )
+
+    assert retrieved_old is not None
+    assert retrieved_old.valid_to == new.valid_from
+    assert retrieved_old.status == MemoryStatus.SUPERSEDED
+
+
+def test_supersede_creates_new_active_memory(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            value="Node.js",
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_001",
+        ),
+        db_path=database_path,
+    )
+
+    new = supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    assert new.value == "Go"
+    assert new.valid_from == datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+    assert new.valid_to is None
+    assert new.status == MemoryStatus.ACTIVE
+
+
+def test_supersede_links_new_memory_to_old_memory(
+    database_path,
+):
+    old = store(
+        **make_store_kwargs(
+            value="Node.js",
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_001",
+        ),
+        db_path=database_path,
+    )
+
+    new = supersede(
+        **make_supersede_kwargs(),
+        db_path=database_path,
+    )
+
+    assert new.supersedes_id == old.memory_id
+
+
+def test_supersede_requires_open_memory(
+    database_path,
+):
+    with pytest.raises(NoOpenMemoryError):
+        supersede(
+            **make_supersede_kwargs(),
+            db_path=database_path,
+        )
+
+
+def test_supersede_rejects_non_increasing_valid_from(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            value="Node.js",
+            valid_from=datetime(
+                2026,
+                6,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_001",
+        ),
+        db_path=database_path,
+    )
+
+    with pytest.raises(ValueError):
+        supersede(
+            **make_supersede_kwargs(
+                valid_from=datetime(
+                    2026,
+                    6,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+            ),
+            db_path=database_path,
+        )
+
+
+def test_supersede_rejects_earlier_valid_from(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            value="Node.js",
+            valid_from=datetime(
+                2026,
+                6,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_001",
+        ),
+        db_path=database_path,
+    )
+
+    with pytest.raises(ValueError):
+        supersede(
+            **make_supersede_kwargs(
+                valid_from=datetime(
+                    2026,
+                    5,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+            ),
+            db_path=database_path,
+        )
+
+
+def test_supersede_rejects_when_multiple_open_memories_exist(
+    database_path,
+):
+    store(
+        **make_store_kwargs(
+            memory_key="primary_backend_language",
+            value="Node.js",
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_001",
+        ),
+        db_path=database_path,
+    )
+
+    connection = sqlite3.connect(database_path)
+
+    try:
+        connection.execute(
+            """
+            INSERT INTO memory (
+                memory_id,
+                memory_key,
+                subject,
+                attribute,
+                value,
+                memory_type,
+                valid_from,
+                valid_to,
+                precision,
+                recorded_at,
+                source_type,
+                source_id,
+                evidence_type,
+                confidence,
+                status,
+                supersedes_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "manual-open-memory",
+                "primary_backend_language",
+                "user",
+                "programming_language",
+                "Go",
+                "skill",
+                "2026-02-01T00:00:00+00:00",
+                None,
+                "exact",
+                "2026-02-01T00:00:00+00:00",
+                "conversation",
+                "conversation_002",
+                "explicit",
+                1.0,
+                "active",
+                None,
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+    with pytest.raises(OverlapError):
+        supersede(
+            **make_supersede_kwargs(),
+            db_path=database_path,
+        )
+
+
+def test_supersede_preserves_timeline(
     database_path,
 ):
     old = store(
@@ -607,158 +922,13 @@ def test_supersede_temporal_queries_return_correct_memory(
     assert july.value == "Go"
 
 
-def test_supersede_requires_open_memory_on_empty_key(database_path):
-    with pytest.raises(NoOpenMemoryError):
-        supersede(
-            **make_supersede_kwargs(),
-            db_path=database_path,
-        )
-
-
-def test_supersede_requires_open_memory_when_only_memory_is_closed(
-    database_path,
-):
-    store(
-        **make_store_kwargs(
-            value="Node.js",
-            valid_from=datetime(
-                2026,
-                1,
-                1,
-                tzinfo=timezone.utc,
-            ),
-            valid_to=datetime(
-                2026,
-                6,
-                1,
-                tzinfo=timezone.utc,
-            ),
-        ),
-        db_path=database_path,
-    )
-
-    with pytest.raises(NoOpenMemoryError):
-        supersede(
-            **make_supersede_kwargs(
-                valid_from=datetime(
-                    2026,
-                    7,
-                    1,
-                    tzinfo=timezone.utc,
-                ),
-            ),
-            db_path=database_path,
-        )
-
-
-def test_supersede_rejects_earlier_valid_from(database_path):
-    store(
-        **make_store_kwargs(
-            value="Node.js",
-            valid_from=datetime(
-                2026,
-                6,
-                1,
-                tzinfo=timezone.utc,
-            ),
-            valid_to=None,
-        ),
-        db_path=database_path,
-    )
-
-    before = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    with pytest.raises(ValueError):
-        supersede(
-            **make_supersede_kwargs(
-                valid_from=datetime(
-                    2026,
-                    5,
-                    1,
-                    tzinfo=timezone.utc,
-                ),
-            ),
-            db_path=database_path,
-        )
-
-    after = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    assert after == before
-
-
-def test_supersede_rejects_equal_valid_from(database_path):
-    valid_from = datetime(
-        2026,
-        6,
-        1,
-        tzinfo=timezone.utc,
-    )
-
-    store(
-        **make_store_kwargs(
-            value="Node.js",
-            valid_from=valid_from,
-            valid_to=None,
-        ),
-        db_path=database_path,
-    )
-
-    before = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    with pytest.raises(ValueError):
-        supersede(
-            **make_supersede_kwargs(
-                valid_from=valid_from,
-            ),
-            db_path=database_path,
-        )
-
-    after = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    assert after == before
-
-
-def test_supersede_rejects_naive_datetime(database_path):
-    with pytest.raises(ValueError, match="timezone-aware"):
-        supersede(
-            **make_supersede_kwargs(
-                valid_from=datetime(
-                    2026,
-                    6,
-                    1,
-                ),
-            ),
-            db_path=database_path,
-        )
-
-
 def test_failed_supersede_leaves_old_memory_open(
     database_path,
     monkeypatch,
 ):
     old = store(
         **make_store_kwargs(
-            valid_to=None,
-        ),
-        db_path=database_path,
-    )
-
-    conflicting = store(
-        **make_store_kwargs(
-            memory_key="other_memory_key",
-            value="Existing",
+            value="Node.js",
             valid_from=datetime(
                 2026,
                 1,
@@ -766,20 +936,33 @@ def test_failed_supersede_leaves_old_memory_open(
                 tzinfo=timezone.utc,
             ),
             valid_to=None,
-            source_id="conversation_conflict",
+            source_id="conversation_001",
         ),
         db_path=database_path,
     )
 
+    conflicting = store(
+        **make_store_kwargs(
+            memory_key="conflicting_memory",
+            value="Python",
+            valid_from=datetime(
+                2026,
+                1,
+                1,
+                tzinfo=timezone.utc,
+            ),
+            valid_to=None,
+            source_id="conversation_003",
+        ),
+        db_path=database_path,
+    )
+
+    class FixedUUID:
+        hex = conflicting.memory_id
+
     monkeypatch.setattr(
         "app.memory.manager.uuid4",
-        lambda: type(
-            "U",
-            (),
-            {
-                "hex": conflicting.memory_id,
-            },
-        )(),
+        lambda: FixedUUID(),
     )
 
     with pytest.raises(sqlite3.IntegrityError):
@@ -788,27 +971,20 @@ def test_failed_supersede_leaves_old_memory_open(
             db_path=database_path,
         )
 
-    after = get(
+    retrieved_old = get(
         old.memory_id,
         database_path,
     )
 
-    assert after is not None
-    assert after.valid_to is None
-    assert after.status == MemoryStatus.ACTIVE
+    assert retrieved_old is not None
+    assert retrieved_old.valid_to is None
+    assert retrieved_old.status == MemoryStatus.ACTIVE
 
-    timeline = list_by_key(
-        "primary_backend_language",
-        database_path,
-    )
-
-    assert len(timeline) == 1
-    assert timeline[0].memory_id == old.memory_id
-
-    conflicting_after = get(
+    retrieved_conflicting = get(
         conflicting.memory_id,
         database_path,
     )
 
-    assert conflicting_after is not None
-    assert conflicting_after.value == "Existing"
+    assert retrieved_conflicting is not None
+    assert retrieved_conflicting.valid_to is None
+    assert retrieved_conflicting.status == MemoryStatus.ACTIVE

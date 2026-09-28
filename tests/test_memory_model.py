@@ -126,3 +126,59 @@ def test_memory_is_frozen():
 
     with pytest.raises(ValidationError):
         memory.value = "Python"
+
+
+def test_consolidated_memory_requires_canonical_memory_id():
+    with pytest.raises(ValidationError):
+        Memory(
+            **make_memory(
+                status=MemoryStatus.CONSOLIDATED,
+                canonical_memory_id=None,
+            )
+        )
+
+
+def test_canonical_memory_id_requires_consolidated_status():
+    with pytest.raises(ValidationError):
+        Memory(
+            **make_memory(
+                status=MemoryStatus.ACTIVE,
+                canonical_memory_id="mem_002",
+            )
+        )
+
+
+def test_consolidated_memory_with_canonical_memory_id_is_valid():
+    memory = Memory(
+        **make_memory(
+            status=MemoryStatus.CONSOLIDATED,
+            canonical_memory_id="mem_002",
+        )
+    )
+
+    assert memory.status == MemoryStatus.CONSOLIDATED
+    assert memory.canonical_memory_id == "mem_002"
+
+
+def test_consolidated_memory_can_have_open_ended_interval():
+    memory = Memory(
+        **make_memory(
+            valid_to=None,
+            status=MemoryStatus.CONSOLIDATED,
+            canonical_memory_id="mem_002",
+        )
+    )
+
+    assert memory.status == MemoryStatus.CONSOLIDATED
+    assert memory.valid_to is None
+    assert memory.canonical_memory_id == "mem_002"
+
+
+def test_memory_cannot_be_canonical_for_itself():
+    with pytest.raises(ValidationError):
+        Memory(
+            **make_memory(
+                status=MemoryStatus.CONSOLIDATED,
+                canonical_memory_id="mem_001",
+            )
+        )

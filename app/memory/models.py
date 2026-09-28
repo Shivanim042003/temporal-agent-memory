@@ -19,6 +19,7 @@ class MemoryStatus(StrEnum):
     SUPERSEDED = "superseded"
     CONFLICTED = "conflicted"
     UNCERTAIN = "uncertain"
+    CONSOLIDATED = "consolidated"
 
 
 class EvidenceType(StrEnum):
@@ -69,6 +70,7 @@ class Memory(BaseModel):
     status: MemoryStatus = MemoryStatus.ACTIVE
 
     supersedes_id: str | None = None
+    canonical_memory_id: str | None = None
 
     @field_validator("valid_from", "valid_to", "recorded_at")
     @classmethod
@@ -107,5 +109,26 @@ class Memory(BaseModel):
     def validate_supersedes_id(self):
         if self.supersedes_id == self.memory_id:
             raise ValueError("memory cannot supersede itself")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_canonical_memory_id(self):
+        if self.canonical_memory_id == self.memory_id:
+            raise ValueError("memory cannot be canonical for itself")
+
+        has_canonical = self.canonical_memory_id is not None
+        is_consolidated = self.status == MemoryStatus.CONSOLIDATED
+
+        if has_canonical and not is_consolidated:
+            raise ValueError(
+                "a memory with canonical_memory_id set must have "
+                "status CONSOLIDATED"
+            )
+
+        if is_consolidated and not has_canonical:
+            raise ValueError(
+                "a CONSOLIDATED memory must have canonical_memory_id set"
+            )
 
         return self

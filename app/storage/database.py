@@ -42,13 +42,38 @@ def initialize_database(
                     CHECK (confidence BETWEEN 0 AND 1),
                 status TEXT NOT NULL,
                 supersedes_id TEXT,
+                canonical_memory_id TEXT,
                 CHECK (
                     valid_to IS NULL
                     OR valid_to > valid_from
+                ),
+                CHECK (
+                    canonical_memory_id IS NULL
+                    OR canonical_memory_id != memory_id
+                ),
+                CHECK (
+                    (status = 'consolidated' AND canonical_memory_id IS NOT NULL)
+                    OR
+                    (status != 'consolidated' AND canonical_memory_id IS NULL)
                 )
             )
             """
         )
+
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(memory)"
+            ).fetchall()
+        }
+
+        if "canonical_memory_id" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE memory
+                ADD COLUMN canonical_memory_id TEXT
+                """
+            )
 
         connection.execute(
             """

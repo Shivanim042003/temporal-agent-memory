@@ -794,3 +794,81 @@ def test_update_on_shared_connection_is_invisible_until_commit(
         assert stored is not None
         assert stored.valid_to == closed_at
         assert stored.status == MemoryStatus.SUPERSEDED
+
+def test_list_by_key_excludes_consolidated_memories_by_default(
+    database_path,
+):
+    canonical = make_memory(
+        memory_id="mem_canonical",
+        recorded_at=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    consolidated = make_memory(
+        memory_id="mem_consolidated",
+        recorded_at=datetime(
+            2026,
+            1,
+            2,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+    )
+
+    insert(canonical, database_path)
+    insert(consolidated, database_path)
+
+    memories = list_by_key(
+        canonical.memory_key,
+        database_path,
+    )
+
+    assert [memory.memory_id for memory in memories] == [
+        "mem_canonical",
+    ]
+
+def test_get_at_time_excludes_consolidated_memories(
+    database_path,
+):
+    canonical = make_memory(
+        memory_id="mem_canonical",
+        recorded_at=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    consolidated = make_memory(
+        memory_id="mem_consolidated",
+        recorded_at=datetime(
+            2026,
+            1,
+            2,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+    )
+
+    insert(canonical, database_path)
+    insert(consolidated, database_path)
+
+    result = get_at_time(
+    canonical.memory_key,
+    datetime(
+        2026,
+        5,
+        31,
+        tzinfo=timezone.utc,
+    ),
+    database_path,
+)
+    assert result is not None
+    assert result.memory_id == "mem_canonical"

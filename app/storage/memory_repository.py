@@ -150,6 +150,7 @@ def list_by_key(
             SELECT *
             FROM memory
             WHERE memory_key = ?
+              AND canonical_memory_id IS NULL
             ORDER BY valid_from ASC
             """,
             (memory_key,),
@@ -188,13 +189,12 @@ def get_at_time(
     query_time = _serialize_datetime(at)
 
     with closing(get_connection(db_path)) as connection:
-        # LIMIT 1 is temporary. Later, Memory Manager validation
-        # will prevent overlapping intervals for the same memory_key.
         row = connection.execute(
             """
             SELECT *
             FROM memory
             WHERE memory_key = ?
+              AND canonical_memory_id IS NULL
               AND valid_from <= ?
               AND (valid_to IS NULL OR ? < valid_to)
             ORDER BY valid_from DESC

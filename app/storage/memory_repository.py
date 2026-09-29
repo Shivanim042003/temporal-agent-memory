@@ -52,6 +52,7 @@ def _memory_to_row(memory: Memory) -> tuple:
         memory.confidence,
         memory.status.value,
         memory.supersedes_id,
+        memory.canonical_memory_id,
     )
 
 
@@ -77,6 +78,7 @@ def _row_to_memory(row) -> Memory:
         confidence=row["confidence"],
         status=row["status"],
         supersedes_id=row["supersedes_id"],
+        canonical_memory_id=row["canonical_memory_id"],
     )
 
 
@@ -104,9 +106,10 @@ def insert(
                 evidence_type,
                 confidence,
                 status,
-                supersedes_id
+                supersedes_id,
+                canonical_memory_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             _memory_to_row(memory),
         )

@@ -21,6 +21,7 @@ from app.storage.memory_repository import (
     get_at_time,
     insert,
     list_by_key,
+    list_consolidated_into,
     update,
 )
 
@@ -43,6 +44,7 @@ def make_memory(**overrides):
         "confidence": 0.98,
         "status": MemoryStatus.HISTORICAL,
         "supersedes_id": None,
+        "canonical_memory_id": None,
     }
 
     data.update(overrides)
@@ -74,6 +76,28 @@ def test_insert_get_round_trip_preserves_memory(database_path):
     assert retrieved.valid_from == memory.valid_from
     assert retrieved.valid_to == memory.valid_to
     assert retrieved.recorded_at == memory.recorded_at
+
+
+def test_insert_get_round_trip_preserves_canonical_memory_id(
+    database_path,
+):
+    memory = make_memory(
+        memory_id="mem_consolidated",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+    )
+
+    insert(memory, database_path)
+
+    retrieved = get(
+        memory.memory_id,
+        database_path,
+    )
+
+    assert retrieved is not None
+    assert retrieved.status == MemoryStatus.CONSOLIDATED
+    assert retrieved.canonical_memory_id == "mem_canonical"
+    assert retrieved == memory
 
 
 def test_march_returns_node_js(database_path):
@@ -340,6 +364,94 @@ def test_list_by_key_unknown_key_returns_empty_list(database_path):
     assert timeline == []
 
 
+def test_list_consolidated_into_returns_matching_memories(
+    database_path,
+):
+    canonical = make_memory(
+        memory_id="mem_canonical",
+        status=MemoryStatus.ACTIVE,
+        canonical_memory_id=None,
+    )
+
+    consolidated_one = make_memory(
+        memory_id="mem_consolidated_1",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        recorded_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
+    )
+
+    consolidated_two = make_memory(
+        memory_id="mem_consolidated_2",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        recorded_at=datetime(2026, 1, 25, tzinfo=timezone.utc),
+    )
+
+    other = make_memory(
+        memory_id="mem_other",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_other_canonical",
+        recorded_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
+    )
+
+    insert(canonical, database_path)
+    insert(consolidated_one, database_path)
+    insert(consolidated_two, database_path)
+    insert(other, database_path)
+
+    result = list_consolidated_into(
+        "mem_canonical",
+        database_path,
+    )
+
+    assert [memory.memory_id for memory in result] == [
+        "mem_consolidated_1",
+        "mem_consolidated_2",
+    ]
+
+
+def test_list_consolidated_into_orders_by_recorded_at(
+    database_path,
+):
+    first_recorded = make_memory(
+        memory_id="mem_first",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        recorded_at=datetime(2026, 1, 20, tzinfo=timezone.utc),
+    )
+
+    second_recorded = make_memory(
+        memory_id="mem_second",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        recorded_at=datetime(2026, 1, 25, tzinfo=timezone.utc),
+    )
+
+    insert(second_recorded, database_path)
+    insert(first_recorded, database_path)
+
+    result = list_consolidated_into(
+        "mem_canonical",
+        database_path,
+    )
+
+    assert [memory.memory_id for memory in result] == [
+        "mem_first",
+        "mem_second",
+    ]
+
+
+def test_list_consolidated_into_unknown_canonical_returns_empty_list(
+    database_path,
+):
+    result = list_consolidated_into(
+        "does-not-exist",
+        database_path,
+    )
+
+    assert result == []
+
+
 def test_update_changes_valid_to(database_path):
     memory = make_memory(
         valid_to=None,
@@ -461,6 +573,7 @@ def test_update_does_not_change_other_fields(database_path):
     assert updated.evidence_type == memory.evidence_type
     assert updated.confidence == memory.confidence
     assert updated.supersedes_id == memory.supersedes_id
+    assert updated.canonical_memory_id == memory.canonical_memory_id
 
 
 def test_update_invalid_valid_to_leaves_memory_unchanged(database_path):

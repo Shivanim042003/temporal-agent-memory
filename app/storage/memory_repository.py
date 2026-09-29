@@ -155,6 +155,25 @@ def list_by_key(
     return [_row_to_memory(row) for row in rows]
 
 
+def list_consolidated_into(
+    canonical_memory_id: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> list[Memory]:
+    with _connection_scope(db_path, connection) as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM memory
+            WHERE canonical_memory_id = ?
+            ORDER BY recorded_at ASC, memory_id ASC
+            """,
+            (canonical_memory_id,),
+        ).fetchall()
+
+    return [_row_to_memory(row) for row in rows]
+
+
 def get_at_time(
     memory_key: str,
     at: datetime,

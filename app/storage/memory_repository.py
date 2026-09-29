@@ -7,6 +7,9 @@ from app.memory.models import Memory, MemoryStatus
 from app.storage.database import DEFAULT_DB_PATH, get_connection
 
 
+_UNSET = object()
+
+
 @contextmanager
 def _connection_scope(
     db_path: Path | str,
@@ -211,6 +214,7 @@ def update(
     *,
     valid_to: datetime | None,
     status: MemoryStatus,
+    canonical_memory_id: str | None | object = _UNSET,
     db_path: Path | str = DEFAULT_DB_PATH,
     connection: sqlite3.Connection | None = None,
 ) -> Memory | None:
@@ -223,11 +227,17 @@ def update(
         if existing is None:
             return None
 
+        if canonical_memory_id is _UNSET:
+            next_canonical_memory_id = existing.canonical_memory_id
+        else:
+            next_canonical_memory_id = canonical_memory_id
+
         updated = Memory(
             **{
                 **existing.model_dump(),
                 "valid_to": valid_to,
                 "status": status,
+                "canonical_memory_id": next_canonical_memory_id,
             }
         )
 
@@ -235,7 +245,8 @@ def update(
             """
             UPDATE memory
             SET valid_to = ?,
-                status = ?
+                status = ?,
+                canonical_memory_id = ?
             WHERE memory_id = ?
             """,
             (
@@ -245,6 +256,7 @@ def update(
                     else None
                 ),
                 updated.status.value,
+                updated.canonical_memory_id,
                 updated.memory_id,
             ),
         )

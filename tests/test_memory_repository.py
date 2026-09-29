@@ -576,6 +576,112 @@ def test_update_does_not_change_other_fields(database_path):
     assert updated.canonical_memory_id == memory.canonical_memory_id
 
 
+def test_update_preserves_canonical_memory_id_when_omitted(
+    database_path,
+):
+    memory = make_memory(
+        memory_id="mem_consolidated",
+        valid_to=None,
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+    )
+
+    insert(memory, database_path)
+
+    closed_at = datetime(
+        2026,
+        6,
+        1,
+        tzinfo=timezone.utc,
+    )
+
+    updated = update(
+        memory.memory_id,
+        valid_to=closed_at,
+        status=MemoryStatus.CONSOLIDATED,
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.canonical_memory_id == "mem_canonical"
+
+    stored = get(
+        memory.memory_id,
+        database_path,
+    )
+
+    assert stored is not None
+    assert stored.canonical_memory_id == "mem_canonical"
+
+
+def test_update_sets_canonical_memory_id(
+    database_path,
+):
+    memory = make_memory(
+        memory_id="mem_consolidated",
+        valid_to=None,
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_old_canonical",
+    )
+
+    insert(memory, database_path)
+
+    updated = update(
+        memory.memory_id,
+        valid_to=memory.valid_to,
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_new_canonical",
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.canonical_memory_id == "mem_new_canonical"
+
+    stored = get(
+        memory.memory_id,
+        database_path,
+    )
+
+    assert stored is not None
+    assert stored.canonical_memory_id == "mem_new_canonical"
+
+
+def test_update_clears_canonical_memory_id_when_explicitly_none(
+    database_path,
+):
+    memory = make_memory(
+        memory_id="mem_consolidated",
+        valid_to=None,
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+    )
+
+    insert(memory, database_path)
+
+    # A consolidated memory cannot have canonical_memory_id=None
+    # while retaining CONSOLIDATED status, so change the status too.
+    updated = update(
+        memory.memory_id,
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+        canonical_memory_id=None,
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.status == MemoryStatus.ACTIVE
+    assert updated.canonical_memory_id is None
+
+    stored = get(
+        memory.memory_id,
+        database_path,
+    )
+
+    assert stored is not None
+    assert stored.status == MemoryStatus.ACTIVE
+    assert stored.canonical_memory_id is None
+
+
 def test_update_invalid_valid_to_leaves_memory_unchanged(database_path):
     memory = make_memory(
         valid_to=None,

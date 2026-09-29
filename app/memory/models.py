@@ -20,6 +20,7 @@ class MemoryStatus(StrEnum):
     CONFLICTED = "conflicted"
     UNCERTAIN = "uncertain"
     CONSOLIDATED = "consolidated"
+    DISCARDED = "discarded"
 
 
 class EvidenceType(StrEnum):

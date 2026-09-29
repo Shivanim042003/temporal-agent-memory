@@ -182,3 +182,21 @@ def test_memory_cannot_be_canonical_for_itself():
                 canonical_memory_id="mem_001",
             )
         )
+
+
+def test_discarded_memory_preserves_original_interval():
+    memory = Memory(
+        **make_memory(
+            valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            status=MemoryStatus.DISCARDED,
+        )
+    )
+
+    assert memory.status == MemoryStatus.DISCARDED
+    assert memory.valid_from == datetime(
+        2026, 1, 1, tzinfo=timezone.utc
+    )
+    assert memory.valid_to == datetime(
+        2026, 6, 1, tzinfo=timezone.utc
+    )

@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -576,112 +576,6 @@ def test_update_does_not_change_other_fields(database_path):
     assert updated.canonical_memory_id == memory.canonical_memory_id
 
 
-def test_update_preserves_canonical_memory_id_when_omitted(
-    database_path,
-):
-    memory = make_memory(
-        memory_id="mem_consolidated",
-        valid_to=None,
-        status=MemoryStatus.CONSOLIDATED,
-        canonical_memory_id="mem_canonical",
-    )
-
-    insert(memory, database_path)
-
-    closed_at = datetime(
-        2026,
-        6,
-        1,
-        tzinfo=timezone.utc,
-    )
-
-    updated = update(
-        memory.memory_id,
-        valid_to=closed_at,
-        status=MemoryStatus.CONSOLIDATED,
-        db_path=database_path,
-    )
-
-    assert updated is not None
-    assert updated.canonical_memory_id == "mem_canonical"
-
-    stored = get(
-        memory.memory_id,
-        database_path,
-    )
-
-    assert stored is not None
-    assert stored.canonical_memory_id == "mem_canonical"
-
-
-def test_update_sets_canonical_memory_id(
-    database_path,
-):
-    memory = make_memory(
-        memory_id="mem_consolidated",
-        valid_to=None,
-        status=MemoryStatus.CONSOLIDATED,
-        canonical_memory_id="mem_old_canonical",
-    )
-
-    insert(memory, database_path)
-
-    updated = update(
-        memory.memory_id,
-        valid_to=memory.valid_to,
-        status=MemoryStatus.CONSOLIDATED,
-        canonical_memory_id="mem_new_canonical",
-        db_path=database_path,
-    )
-
-    assert updated is not None
-    assert updated.canonical_memory_id == "mem_new_canonical"
-
-    stored = get(
-        memory.memory_id,
-        database_path,
-    )
-
-    assert stored is not None
-    assert stored.canonical_memory_id == "mem_new_canonical"
-
-
-def test_update_clears_canonical_memory_id_when_explicitly_none(
-    database_path,
-):
-    memory = make_memory(
-        memory_id="mem_consolidated",
-        valid_to=None,
-        status=MemoryStatus.CONSOLIDATED,
-        canonical_memory_id="mem_canonical",
-    )
-
-    insert(memory, database_path)
-
-    # A consolidated memory cannot have canonical_memory_id=None
-    # while retaining CONSOLIDATED status, so change the status too.
-    updated = update(
-        memory.memory_id,
-        valid_to=None,
-        status=MemoryStatus.ACTIVE,
-        canonical_memory_id=None,
-        db_path=database_path,
-    )
-
-    assert updated is not None
-    assert updated.status == MemoryStatus.ACTIVE
-    assert updated.canonical_memory_id is None
-
-    stored = get(
-        memory.memory_id,
-        database_path,
-    )
-
-    assert stored is not None
-    assert stored.status == MemoryStatus.ACTIVE
-    assert stored.canonical_memory_id is None
-
-
 def test_update_invalid_valid_to_leaves_memory_unchanged(database_path):
     memory = make_memory(
         valid_to=None,
@@ -713,6 +607,85 @@ def test_update_invalid_valid_to_leaves_memory_unchanged(database_path):
     assert stored is not None
     assert stored.valid_to is None
     assert stored.status == MemoryStatus.ACTIVE
+
+
+def test_update_preserves_canonical_memory_id_when_omitted(
+    database_path,
+):
+    memory = make_memory(
+        memory_id="mem_consolidated",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        valid_to=None,
+    )
+
+    insert(memory, database_path)
+
+    updated = update(
+        memory.memory_id,
+        valid_to=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        status=MemoryStatus.CONSOLIDATED,
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.canonical_memory_id == "mem_canonical"
+
+    stored = get(memory.memory_id, database_path)
+    assert stored.canonical_memory_id == "mem_canonical"
+
+
+def test_update_sets_canonical_memory_id(database_path):
+    memory = make_memory(
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+
+    insert(memory, database_path)
+
+    updated = update(
+        memory.memory_id,
+        valid_to=None,
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.status == MemoryStatus.CONSOLIDATED
+    assert updated.canonical_memory_id == "mem_canonical"
+
+    stored = get(memory.memory_id, database_path)
+    assert stored.status == MemoryStatus.CONSOLIDATED
+    assert stored.canonical_memory_id == "mem_canonical"
+
+
+def test_update_clears_canonical_memory_id_when_explicitly_none(
+    database_path,
+):
+    memory = make_memory(
+        memory_id="mem_consolidated",
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+        valid_to=None,
+    )
+
+    insert(memory, database_path)
+
+    updated = update(
+        memory.memory_id,
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+        canonical_memory_id=None,
+        db_path=database_path,
+    )
+
+    assert updated is not None
+    assert updated.status == MemoryStatus.ACTIVE
+    assert updated.canonical_memory_id is None
+
+    stored = get(memory.memory_id, database_path)
+    assert stored.canonical_memory_id is None
 
 
 def test_insert_on_shared_connection_is_invisible_until_commit(
@@ -795,80 +768,61 @@ def test_update_on_shared_connection_is_invisible_until_commit(
         assert stored.valid_to == closed_at
         assert stored.status == MemoryStatus.SUPERSEDED
 
-def test_list_by_key_excludes_consolidated_memories_by_default(
-    database_path,
-):
-    canonical = make_memory(
-        memory_id="mem_canonical",
-        recorded_at=datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
+
+def test_list_by_key_excludes_discarded_memories(database_path):
+    active = make_memory(
+        memory_id="mem_active",
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+    discarded = make_memory(
+        memory_id="mem_discarded",
+        valid_to=None,
+        status=MemoryStatus.DISCARDED,
     )
 
-    consolidated = make_memory(
-        memory_id="mem_consolidated",
-        recorded_at=datetime(
-            2026,
-            1,
-            2,
-            tzinfo=timezone.utc,
-        ),
-        status=MemoryStatus.CONSOLIDATED,
-        canonical_memory_id="mem_canonical",
+    insert(active, database_path)
+    insert(discarded, database_path)
+
+    result = list_by_key("primary_backend_language", database_path)
+
+    assert [m.memory_id for m in result] == ["mem_active"]
+
+
+def test_get_at_time_excludes_discarded_memories(database_path):
+    active = make_memory(
+        memory_id="mem_active",
+        valid_to=None,
+        status=MemoryStatus.ACTIVE,
+    )
+    discarded = make_memory(
+        memory_id="mem_discarded",
+        valid_to=None,
+        status=MemoryStatus.DISCARDED,
     )
 
-    insert(canonical, database_path)
-    insert(consolidated, database_path)
+    insert(active, database_path)
+    insert(discarded, database_path)
 
-    memories = list_by_key(
-        canonical.memory_key,
+    result = get_at_time(
+        "primary_backend_language",
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
         database_path,
     )
 
-    assert [memory.memory_id for memory in memories] == [
-        "mem_canonical",
-    ]
-
-def test_get_at_time_excludes_consolidated_memories(
-    database_path,
-):
-    canonical = make_memory(
-        memory_id="mem_canonical",
-        recorded_at=datetime(
-            2026,
-            1,
-            1,
-            tzinfo=timezone.utc,
-        ),
-    )
-
-    consolidated = make_memory(
-        memory_id="mem_consolidated",
-        recorded_at=datetime(
-            2026,
-            1,
-            2,
-            tzinfo=timezone.utc,
-        ),
-        status=MemoryStatus.CONSOLIDATED,
-        canonical_memory_id="mem_canonical",
-    )
-
-    insert(canonical, database_path)
-    insert(consolidated, database_path)
-
-    result = get_at_time(
-    canonical.memory_key,
-    datetime(
-        2026,
-        5,
-        31,
-        tzinfo=timezone.utc,
-    ),
-    database_path,
-)
     assert result is not None
-    assert result.memory_id == "mem_canonical"
+    assert result.memory_id == "mem_active"
+
+
+def test_get_still_returns_discarded_memory_by_id(database_path):
+    discarded = make_memory(
+        memory_id="mem_discarded",
+        valid_to=None,
+        status=MemoryStatus.DISCARDED,
+    )
+    insert(discarded, database_path)
+
+    result = get("mem_discarded", database_path)
+
+    assert result is not None
+    assert result.status == MemoryStatus.DISCARDED

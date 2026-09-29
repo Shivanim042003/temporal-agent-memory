@@ -1,3 +1,4 @@
 pydantic
 pytest
 python-dotenv
+sentence-transformers==6.1.0

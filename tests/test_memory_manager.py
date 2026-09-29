@@ -477,3 +477,70 @@ def test_consolidate_failure_leaves_database_unchanged(
 
     assert stored_b.status == MemoryStatus.ACTIVE
     assert stored_b.canonical_memory_id is None
+
+def test_consolidate_preserves_redundant_memories_as_evidence(
+    database_path,
+):
+    first = insert_memory(
+        database_path,
+        memory_id="mem_a",
+        recorded_at=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    second = insert_memory(
+        database_path,
+        memory_id="mem_b",
+        recorded_at=datetime(
+            2026,
+            1,
+            2,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    third = insert_memory(
+        database_path,
+        memory_id="mem_c",
+        recorded_at=datetime(
+            2026,
+            1,
+            3,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    canonical = consolidate(
+        [
+            first.memory_id,
+            second.memory_id,
+            third.memory_id,
+        ],
+        db_path=database_path,
+    )
+
+    from app.storage.memory_repository import list_consolidated_into
+
+    evidence = list_consolidated_into(
+        canonical.memory_id,
+        database_path,
+    )
+
+    assert [memory.memory_id for memory in evidence] == [
+        "mem_b",
+        "mem_c",
+    ]
+
+    assert all(
+        memory.status == MemoryStatus.CONSOLIDATED
+        for memory in evidence
+    )
+
+    assert all(
+        memory.canonical_memory_id == canonical.memory_id
+        for memory in evidence
+    )

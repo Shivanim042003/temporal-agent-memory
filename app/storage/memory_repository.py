@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,6 +151,7 @@ def list_by_key(
             FROM memory
             WHERE memory_key = ?
               AND canonical_memory_id IS NULL
+              AND status != 'discarded'
             ORDER BY valid_from ASC
             """,
             (memory_key,),
@@ -195,6 +196,7 @@ def get_at_time(
             FROM memory
             WHERE memory_key = ?
               AND canonical_memory_id IS NULL
+              AND status != 'discarded'
               AND valid_from <= ?
               AND (valid_to IS NULL OR ? < valid_to)
             ORDER BY valid_from DESC

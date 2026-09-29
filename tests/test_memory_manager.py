@@ -6,6 +6,9 @@ from app.memory.manager import (
     InvalidConsolidationError,
     MemoryNotFoundError,
     consolidate,
+    get_at_time,
+    get_current,
+    get_range,
 )
 from app.memory.models import (
     EvidenceType,
@@ -478,6 +481,7 @@ def test_consolidate_failure_leaves_database_unchanged(
     assert stored_b.status == MemoryStatus.ACTIVE
     assert stored_b.canonical_memory_id is None
 
+
 def test_consolidate_preserves_redundant_memories_as_evidence(
     database_path,
 ):
@@ -544,3 +548,187 @@ def test_consolidate_preserves_redundant_memories_as_evidence(
         memory.canonical_memory_id == canonical.memory_id
         for memory in evidence
     )
+
+
+def test_get_current_excludes_consolidated_memories(
+    database_path,
+):
+    canonical = insert_memory(
+        database_path,
+        memory_id="mem_canonical",
+        recorded_at=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    consolidated = insert_memory(
+        database_path,
+        memory_id="mem_consolidated",
+        recorded_at=datetime(
+            2026,
+            1,
+            2,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id=canonical.memory_id,
+    )
+
+    result = get_current(
+        canonical.memory_key,
+        database_path,
+    )
+
+    assert result is not None
+    assert result.memory_id == canonical.memory_id
+    assert result.memory_id != consolidated.memory_id
+
+
+def test_get_range_excludes_consolidated_memories(
+    database_path,
+):
+    canonical = insert_memory(
+        database_path,
+        memory_id="mem_canonical",
+        recorded_at=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        valid_from=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        valid_to=datetime(
+            2026,
+            6,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.HISTORICAL,
+    )
+
+    consolidated = insert_memory(
+        database_path,
+        memory_id="mem_consolidated",
+        recorded_at=datetime(
+            2026,
+            1,
+            2,
+            tzinfo=timezone.utc,
+        ),
+        valid_from=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        valid_to=datetime(
+            2026,
+            6,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id=canonical.memory_id,
+    )
+
+    result = get_range(
+        canonical.memory_key,
+        datetime(
+            2026,
+            2,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        datetime(
+            2026,
+            3,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        database_path,
+    )
+
+    assert [memory.memory_id for memory in result] == [
+        canonical.memory_id,
+    ]
+
+    assert all(
+        memory.memory_id != consolidated.memory_id
+        for memory in result
+    )
+
+
+def test_get_at_time_excludes_consolidated_memories(
+    database_path,
+):
+    canonical = insert_memory(
+        database_path,
+        memory_id="mem_canonical",
+        recorded_at=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        valid_from=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        valid_to=datetime(
+            2026,
+            6,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.HISTORICAL,
+    )
+
+    consolidated = insert_memory(
+        database_path,
+        memory_id="mem_consolidated",
+        recorded_at=datetime(
+            2026,
+            1,
+            2,
+            tzinfo=timezone.utc,
+        ),
+        valid_from=datetime(
+            2026,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        valid_to=datetime(
+            2026,
+            6,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id=canonical.memory_id,
+    )
+
+    result = get_at_time(
+        canonical.memory_key,
+        datetime(
+            2026,
+            5,
+            31,
+            tzinfo=timezone.utc,
+        ),
+        database_path,
+    )
+
+    assert result is not None
+    assert result.memory_id == canonical.memory_id
+    assert result.memory_id != consolidated.memory_id

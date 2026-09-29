@@ -236,6 +236,59 @@ def supersede(
         connection.close()
 
 
+def discard(
+    memory_id: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> Memory:
+    connection = get_connection(db_path)
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+
+        existing = repo_get(
+            memory_id,
+            connection=connection,
+        )
+
+        if existing is None:
+            raise MemoryNotFoundError(
+                f"Memory {memory_id} does not exist"
+            )
+
+        if existing.status == MemoryStatus.DISCARDED:
+            return existing
+
+        if existing.canonical_memory_id is not None:
+            raise InvalidConsolidationError(
+                f"Memory {memory_id} is already consolidated "
+                f"into {existing.canonical_memory_id}"
+            )
+
+        discarded = repo_update(
+            memory_id,
+            valid_to=existing.valid_to,
+            status=MemoryStatus.DISCARDED,
+            canonical_memory_id=None,
+            connection=connection,
+        )
+
+        if discarded is None:
+            raise MemoryNotFoundError(
+                f"Memory {memory_id} disappeared"
+            )
+
+        connection.commit()
+
+        return discarded
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+
 def consolidate(
     memory_ids: list[str],
     *,

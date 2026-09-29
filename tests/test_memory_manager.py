@@ -6,6 +6,7 @@ from app.memory.manager import (
     InvalidConsolidationError,
     MemoryNotFoundError,
     consolidate,
+    discard,
     get_at_time,
     get_current,
     get_range,
@@ -732,3 +733,70 @@ def test_get_at_time_excludes_consolidated_memories(
     assert result is not None
     assert result.memory_id == canonical.memory_id
     assert result.memory_id != consolidated.memory_id
+
+
+def test_discard_marks_memory_discarded(database_path):
+    memory = insert_memory(
+        database_path,
+        memory_id="mem_a",
+        recorded_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+    )
+
+    updated = discard(memory.memory_id, database_path)
+
+    assert updated.status == MemoryStatus.DISCARDED
+    assert updated.valid_from == memory.valid_from
+    assert updated.valid_to == memory.valid_to
+
+    stored = get(memory.memory_id, database_path)
+    assert stored.status == MemoryStatus.DISCARDED
+
+
+def test_discard_rejects_unknown_memory(database_path):
+    with pytest.raises(MemoryNotFoundError):
+        discard("does_not_exist", database_path)
+
+
+def test_discard_is_idempotent_for_already_discarded_memory(
+    database_path,
+):
+    memory = insert_memory(
+        database_path,
+        memory_id="mem_a",
+        recorded_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+        status=MemoryStatus.DISCARDED,
+    )
+
+    result = discard(memory.memory_id, database_path)
+
+    assert result.status == MemoryStatus.DISCARDED
+    assert result.memory_id == memory.memory_id
+
+
+def test_discard_rejects_consolidated_memory(database_path):
+    memory = insert_memory(
+        database_path,
+        memory_id="mem_consolidated",
+        recorded_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+        status=MemoryStatus.CONSOLIDATED,
+        canonical_memory_id="mem_canonical",
+    )
+
+    with pytest.raises(InvalidConsolidationError):
+        discard(memory.memory_id, database_path)
+
+
+def test_discarded_memory_excluded_from_get_current(database_path):
+    memory = insert_memory(
+        database_path,
+        memory_id="mem_a",
+        recorded_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        valid_to=None,
+    )
+
+    discard(memory.memory_id, database_path)
+
+    assert get_current(memory.memory_key, database_path) is None

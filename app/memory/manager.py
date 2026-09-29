@@ -12,10 +12,11 @@ from app.memory.models import (
 )
 from app.storage.database import DEFAULT_DB_PATH, get_connection
 from app.storage.memory_repository import (
+    get as repo_get,
     get_at_time as repo_get_at_time,
     insert,
     list_by_key,
-    update,
+    update as repo_update,
 )
 
 
@@ -24,6 +25,14 @@ class OverlapError(Exception):
 
 
 class NoOpenMemoryError(Exception):
+    pass
+
+
+class MemoryNotFoundError(Exception):
+    pass
+
+
+class InvalidConsolidationError(Exception):
     pass
 
 
@@ -198,7 +207,7 @@ def supersede(
             supersedes_id=current.memory_id,
         )
 
-        closed = update(
+        closed = repo_update(
             current.memory_id,
             valid_to=new_memory.valid_from,
             status=MemoryStatus.SUPERSEDED,
@@ -218,6 +227,115 @@ def supersede(
         connection.commit()
 
         return new_memory
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+
+def consolidate(
+    memory_ids: list[str],
+    *,
+    canonical_memory_id: str | None = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> Memory:
+    if len(memory_ids) < 2:
+        raise InvalidConsolidationError(
+            "consolidate() requires at least two memories"
+        )
+
+    if len(set(memory_ids)) != len(memory_ids):
+        raise InvalidConsolidationError(
+            "consolidate() received duplicate memory_ids"
+        )
+
+    connection = get_connection(db_path)
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+
+        candidates: list[Memory] = []
+
+        for memory_id in memory_ids:
+            memory = repo_get(
+                memory_id,
+                connection=connection,
+            )
+
+            if memory is None:
+                raise MemoryNotFoundError(
+                    f"Memory {memory_id} does not exist"
+                )
+
+            if memory.status == MemoryStatus.CONSOLIDATED:
+                raise InvalidConsolidationError(
+                    f"Memory {memory_id} is already consolidated "
+                    f"into {memory.canonical_memory_id}"
+                )
+
+            candidates.append(memory)
+
+        first = candidates[0]
+
+        for other in candidates[1:]:
+            if (
+                other.memory_key != first.memory_key
+                or other.subject != first.subject
+                or other.attribute != first.attribute
+                or other.value != first.value
+                or other.valid_from != first.valid_from
+                or other.valid_to != first.valid_to
+            ):
+                raise InvalidConsolidationError(
+                    "all candidates must share memory_key, subject, "
+                    "attribute, value, valid_from, and valid_to"
+                )
+
+        if canonical_memory_id is not None:
+            canonical = next(
+                (
+                    memory
+                    for memory in candidates
+                    if memory.memory_id == canonical_memory_id
+                ),
+                None,
+            )
+
+            if canonical is None:
+                raise InvalidConsolidationError(
+                    f"canonical_memory_id {canonical_memory_id} "
+                    f"is not in the candidate set"
+                )
+        else:
+            canonical = min(
+                candidates,
+                key=lambda memory: memory.recorded_at,
+            )
+
+        for candidate in candidates:
+            if candidate.memory_id == canonical.memory_id:
+                continue
+
+            updated = repo_update(
+                candidate.memory_id,
+                valid_to=candidate.valid_to,
+                status=MemoryStatus.CONSOLIDATED,
+                canonical_memory_id=canonical.memory_id,
+                connection=connection,
+            )
+
+            if updated is None:
+                raise MemoryNotFoundError(
+                    f"Memory {candidate.memory_id} disappeared "
+                    "during consolidation"
+                )
+
+        connection.commit()
+
+        return canonical
 
     except Exception:
         connection.rollback()
@@ -272,7 +390,12 @@ def get_range(
     return [
         memory
         for memory in timeline
-        if _overlaps(memory.valid_from, memory.valid_to, start, end)
+        if _overlaps(
+            memory.valid_from,
+            memory.valid_to,
+            start,
+            end,
+        )
     ]
 
 
@@ -283,16 +406,24 @@ def get_transition(
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> datetime | None:
     timeline = list_by_key(memory_key, db_path)
-    by_id = {memory.memory_id: memory for memory in timeline}
+    by_id = {
+        memory.memory_id: memory
+        for memory in timeline
+    }
 
     for memory in timeline:
         if memory.value != to_value:
             continue
+
         if memory.supersedes_id is None:
             continue
 
         previous = by_id.get(memory.supersedes_id)
-        if previous is not None and previous.value == from_value:
+
+        if (
+            previous is not None
+            and previous.value == from_value
+        ):
             return memory.valid_from
 
     return None

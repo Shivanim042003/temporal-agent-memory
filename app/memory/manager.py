@@ -10,7 +10,14 @@ from app.memory.models import (
     SourceType,
     TimePrecision,
 )
-from app.storage.database import DEFAULT_DB_PATH, get_connection
+from app.retrieval.hybrid_memory import (
+    HybridMemoryResult,
+    HybridMemoryRetriever,
+)
+from app.storage.database import (
+    DEFAULT_DB_PATH,
+    get_connection,
+)
 from app.storage.memory_repository import (
     get as repo_get,
     get_at_time as repo_get_at_time,
@@ -42,10 +49,21 @@ def _overlaps(
     b_from: datetime,
     b_to: datetime | None,
 ) -> bool:
-    far_future = datetime.max.replace(tzinfo=timezone.utc)
+    far_future = datetime.max.replace(
+        tzinfo=timezone.utc
+    )
 
-    a_end = a_to if a_to is not None else far_future
-    b_end = b_to if b_to is not None else far_future
+    a_end = (
+        a_to
+        if a_to is not None
+        else far_future
+    )
+
+    b_end = (
+        b_to
+        if b_to is not None
+        else far_future
+    )
 
     return (
         a_from < b_end
@@ -150,9 +168,13 @@ def supersede(
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> Memory:
     if valid_from.tzinfo is None:
-        raise ValueError("datetime must be timezone-aware")
+        raise ValueError(
+            "datetime must be timezone-aware"
+        )
 
-    valid_from = valid_from.astimezone(timezone.utc)
+    valid_from = valid_from.astimezone(
+        timezone.utc
+    )
 
     connection = get_connection(db_path)
 
@@ -352,7 +374,8 @@ def consolidate(
                 (
                     memory
                     for memory in candidates
-                    if memory.memory_id == canonical_memory_id
+                    if memory.memory_id
+                    == canonical_memory_id
                 ),
                 None,
             )
@@ -383,7 +406,7 @@ def consolidate(
             if updated is None:
                 raise MemoryNotFoundError(
                     f"Memory {candidate.memory_id} disappeared "
-                    "during consolidation"
+                    f"during consolidation"
                 )
 
         connection.commit()
@@ -414,7 +437,10 @@ def get_current(
     memory_key: str,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> Memory | None:
-    timeline = list_by_key(memory_key, db_path)
+    timeline = list_by_key(
+        memory_key,
+        db_path,
+    )
 
     for memory in timeline:
         if memory.valid_to is None:
@@ -429,16 +455,26 @@ def get_range(
     end: datetime,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> list[Memory]:
-    if start.tzinfo is None or end.tzinfo is None:
-        raise ValueError("datetime must be timezone-aware")
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+    ):
+        raise ValueError(
+            "datetime must be timezone-aware"
+        )
 
     start = start.astimezone(timezone.utc)
     end = end.astimezone(timezone.utc)
 
     if end <= start:
-        raise ValueError("end must be strictly after start")
+        raise ValueError(
+            "end must be strictly after start"
+        )
 
-    timeline = list_by_key(memory_key, db_path)
+    timeline = list_by_key(
+        memory_key,
+        db_path,
+    )
 
     return [
         memory
@@ -452,13 +488,80 @@ def get_range(
     ]
 
 
+def hybrid_search(
+    memories: list[Memory],
+    semantic_scores: dict[str, float],
+    *,
+    at: datetime | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    top_k: int | None = None,
+) -> HybridMemoryResult:
+    if at is not None and (
+        start is not None
+        or end is not None
+    ):
+        raise ValueError(
+            "provide either at or start/end, not both"
+        )
+
+    if (start is None) != (end is None):
+        raise ValueError(
+            "start and end must be provided together"
+        )
+
+    retriever = HybridMemoryRetriever()
+
+    if at is not None:
+        return retriever.search_at_time(
+            memories=memories,
+            semantic_scores=semantic_scores,
+            at=at,
+            top_k=top_k,
+        )
+
+    if start is not None and end is not None:
+        return retriever.search_range(
+            memories=memories,
+            semantic_scores=semantic_scores,
+            start=start,
+            end=end,
+            top_k=top_k,
+        )
+
+    scored_candidates = retriever._score_candidates(
+        memories,
+        semantic_scores,
+    )
+
+    conflicts = (
+        retriever.conflict_detector.detect(
+            memories
+        )
+    )
+
+    ranked_candidates = retriever.ranker.rank(
+        scored_candidates,
+        top_k=top_k,
+    )
+
+    return HybridMemoryResult(
+        candidates=ranked_candidates,
+        conflicts=conflicts,
+    )
+
+
 def get_transition(
     memory_key: str,
     from_value: str,
     to_value: str,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> datetime | None:
-    timeline = list_by_key(memory_key, db_path)
+    timeline = list_by_key(
+        memory_key,
+        db_path,
+    )
+
     by_id = {
         memory.memory_id: memory
         for memory in timeline
@@ -471,7 +574,9 @@ def get_transition(
         if memory.supersedes_id is None:
             continue
 
-        previous = by_id.get(memory.supersedes_id)
+        previous = by_id.get(
+            memory.supersedes_id
+        )
 
         if (
             previous is not None

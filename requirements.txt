@@ -2,3 +2,8 @@ pydantic
 pytest
 python-dotenv
 sentence-transformers==6.1.0
+faiss-cpu
+langgraph==1.2.12
+fastapi
+uvicorn
+httpx

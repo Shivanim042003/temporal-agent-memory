@@ -15,6 +15,10 @@ class MemoryAgentState(BaseModel):
 
     source_id: str = Field(min_length=1)
 
+    memory_keys: list[str] = Field(
+        default_factory=list
+    )
+
     extracted_memories: list[MemoryExtractionCandidate] = Field(
         default_factory=list
     )
@@ -34,3 +38,5 @@ class MemoryAgentState(BaseModel):
     query_time: datetime | None = None
 
     error: str | None = None
+
+    answer: str | None = None
